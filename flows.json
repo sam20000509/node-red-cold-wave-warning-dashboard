@@ -1,0 +1,326 @@
+[
+    {
+        "id": "4bd671cd634b0665",
+        "type": "tab",
+        "label": "流程1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "a918d704b4e4d61d",
+        "type": "inject",
+        "z": "4bd671cd634b0665",
+        "name": "定時更新",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "180",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 130,
+        "y": 120,
+        "wires": [
+            [
+                "538859a058be09e0"
+            ]
+        ]
+    },
+    {
+        "id": "538859a058be09e0",
+        "type": "http request",
+        "z": "4bd671cd634b0665",
+        "name": "抓取氣象局資料",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=YOUR_CWA_API_KEY",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 320,
+        "y": 120,
+        "wires": [
+            [
+                "3f76fd4369670ccb"
+            ]
+        ]
+    },
+    {
+        "id": "3d3a6ff8bf27ee47",
+        "type": "function",
+        "z": "4bd671cd634b0665",
+        "name": "資料整理與分組",
+        "func": "// --- 後台：整合台灣 CWA 與 日本 Open-Meteo 資料 ---\n\n// 1. 定義台灣區域\nconst regionMap = {\n    \"北部\": [\"基隆市\", \"臺北市\", \"新北市\", \"桃園市\", \"新竹市\", \"新竹縣\", \"宜蘭縣\"],\n    \"中部\": [\"苗栗縣\", \"臺中市\", \"彰化縣\", \"南投縣\", \"雲林縣\"],\n    \"南部\": [\"嘉義市\", \"嘉義縣\", \"臺南市\", \"高雄市\", \"屏東縣\"],\n    \"東部\": [\"花蓮縣\", \"臺東縣\"],\n    \"離島\": [\"澎湖縣\", \"金門縣\", \"連江縣\"]\n};\n\nlet finalData = {};\n\n// --- 2. 處理台灣資料 (從 msg.taiwan 讀取) ---\nif (msg.taiwan && msg.taiwan.records) {\n    let twCities = msg.taiwan.records.location;\n    twCities.forEach(city => {\n        let name = city.locationName;\n        let we = city.weatherElement;\n        \n        // 找區域\n        for (let region in regionMap) {\n            if (regionMap[region].includes(name)) {\n                if (!finalData[region]) finalData[region] = [];\n                // 存入格式\n                finalData[region].push({\n                    city: name,\n                    // 抓第一筆(現在)和第二筆(預測)\n                    minT: [we.find(e=>e.elementName==\"MinT\").time[0], we.find(e=>e.elementName==\"MinT\").time[1]],\n                    maxT: [we.find(e=>e.elementName==\"MaxT\").time[0], we.find(e=>e.elementName==\"MaxT\").time[1]],\n                    wx:   [we.find(e=>e.elementName==\"Wx\").time[0],   we.find(e=>e.elementName==\"Wx\").time[1]]\n                });\n                break;\n            }\n        }\n    });\n}\n\n// --- 3. 處理日本資料 (從 msg.payload 讀取) ---\n// 日本 API 回傳的是 WMO 代碼，我們寫個簡單轉換\nfunction wmoCodeToText(code) {\n    if(code === 0) return \"晴朗\";\n    if(code <= 3) return \"多雲\";\n    if(code <= 67) return \"陰雨\";\n    if(code <= 77) return \"下雪\"; // 重點！\n    if(code <= 86) return \"陣雪\";\n    return \"有雪\";\n}\n\nif (msg.payload && msg.payload.daily) {\n    let jpData = msg.payload;\n    let jpDaily = jpData.daily;\n    \n    // 建立一個新的「日本地區」\n    finalData[\"日本\"] = [];\n    \n    // 手動建立札幌資料，模擬成台灣 CWA 的格式結構，這樣前台不用改程式\n    // 日本 API 給的是每日最高低溫\n    let minT_Now = jpDaily.temperature_2m_min[0];\n    let maxT_Now = jpDaily.temperature_2m_max[0];\n    let wx_Now   = wmoCodeToText(jpDaily.weathercode[0]);\n    \n    let minT_Next = jpDaily.temperature_2m_min[1]; // 明天\n    let maxT_Next = jpDaily.temperature_2m_max[1];\n    let wx_Next   = wmoCodeToText(jpDaily.weathercode[1]);\n\n    finalData[\"日本\"].push({\n        city: \"北海道(札幌)\",\n        minT: [\n            { parameter: { parameterName: minT_Now } }, // 模擬結構\n            { parameter: { parameterName: minT_Next }, startTime: \"明日預報\" }\n        ],\n        maxT: [\n            { parameter: { parameterName: maxT_Now } },\n            { parameter: { parameterName: maxT_Next } }\n        ],\n        wx: [\n            { parameter: { parameterName: wx_Now } },\n            { parameter: { parameterName: wx_Next } }\n        ]\n    });\n    \n    // 您也可以多加一個東京\n    // 但為了簡化流程，我們先只加最冷的北海道\n}\n\n// 存入倉庫\nglobal.set(\"weatherData_36H\", finalData);\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 900,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "bd83dc59f5bbf293",
+        "type": "ui_dropdown",
+        "z": "4bd671cd634b0665",
+        "name": "",
+        "label": "請選擇區域",
+        "tooltip": "",
+        "place": "Select option",
+        "group": "c867b83fc91849f1",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "passthru": true,
+        "multiple": false,
+        "options": [
+            {
+                "label": "北部地區",
+                "value": "北部",
+                "type": "str"
+            },
+            {
+                "label": "中部地區",
+                "value": "中部",
+                "type": "str"
+            },
+            {
+                "label": "南部地區",
+                "value": "南部",
+                "type": "str"
+            },
+            {
+                "label": "東部地區",
+                "value": "東部",
+                "type": "str"
+            },
+            {
+                "label": "離島地區",
+                "value": "離島",
+                "type": "str"
+            },
+            {
+                "label": "日本地區 (寒流測試)",
+                "value": "日本",
+                "type": "str"
+            }
+        ],
+        "payload": "",
+        "topic": "topic",
+        "topicType": "msg",
+        "className": "",
+        "x": 130,
+        "y": 200,
+        "wires": [
+            [
+                "dd1aa9fb83d31b31"
+            ]
+        ]
+    },
+    {
+        "id": "dd1aa9fb83d31b31",
+        "type": "function",
+        "z": "4bd671cd634b0665",
+        "name": "過濾選定區域",
+        "func": "// --- 前台：讀取資料、產生多樣化建議、計算12小時預警 ---\nlet selectedRegion = msg.payload; \nlet allData = global.get(\"weatherData_36H\"); \n\nif (!allData) {\n    node.warn(\"無資料，請按上方的 Inject 按鈕\");\n    msg.payload = []; \n    return msg;\n}\n\nlet regionData = allData[selectedRegion];\nlet outputArray = [];\n\n// --- 1. 超級食補資料庫 (多樣化越多越好) ---\nconst foodDB = {\n    // 寒冷 (<15度) - 溫補暖身\n    cold: [\n        \"薑母鴨\", \"藥燉排骨\", \"麻油雞\", \"羊肉爐\", \n        \"札幌拉麵\", \"石狩鍋(鮭魚火鍋)\", \"溫清酒\", \"壽喜燒\",// 新增日式\n        \"薑母鴨\", \"藥燉排骨\", \"麻油雞\", \"羊肉爐\", \"當歸鴨麵線\", \n        \"十全大補湯\", \"燒酒雞\", \"麻油腰子\", \"桂圓紅棗茶\", \"黑糖薑茶\",\n        \"胡椒豬肚雞\", \"蒜頭蛤蜊雞\", \"韓式人蔘雞\", \"麻辣鍋\"\n    ],\n    // 微涼 (15-20度) - 平補護氣\n    cool: [\n        \"香菇雞湯\", \"四神湯\", \"蒜頭雞\", \"剝皮辣椒雞\", \"山藥排骨湯\",\n        \"蛤蜊湯\", \"味噌魚湯\", \"羅宋湯\", \"麻油麵線\", \"熱豆花\",\n        \"排骨酥湯\", \"虱目魚粥\", \"牛肉湯\", \"茶碗蒸\"\n    ],\n    // 舒適 (20-28度) - 清爽養生\n    normal: [\n        \"銀耳蓮子湯\", \"無糖豆漿\", \"番茄牛肉湯\", \"清炒地瓜葉\", \"鱸魚湯\",\n        \"蓮藕排骨湯\", \"青木瓜排骨\", \"涼拌小黃瓜\", \"水果優格\", \"蒸蛋\",\n        \"白木耳湯\", \"南瓜濃湯\", \"鮮魚湯\", \"雞肉沙拉\"\n    ],\n    // 炎熱 (>28度) - 退火消暑\n    hot: [\n        \"綠豆湯\", \"薏仁水\", \"冬瓜茶\", \"苦瓜排骨湯\", \"西瓜\",\n        \"仙草蜜\", \"愛玉檸檬\", \"菊花茶\", \"椰子水\", \"涼拌竹筍\",\n        \"絲瓜蛤蜊\", \"皮蛋豆腐\", \"冷泡茶\", \"酸梅湯\"\n    ]\n};\n\n// --- 2. 完整農民曆資料庫 ---\nconst yiDB = [\"祭祀\", \"出行\", \"嫁娶\", \"移徙\", \"修造\", \"動土\", \"安床\", \"納財\", \"開市\", \"會友\", \"沐浴\", \"理髮\", \"栽種\", \"納畜\", \"安門\"];\nconst jiDB = [\"安葬\", \"作灶\", \"入宅\", \"破土\", \"伐木\", \"訴訟\", \"針灸\", \"開倉\", \"遠行\", \"探病\"];\n\n// 取得今天日期種子\nlet today = new Date();\nlet daySeed = today.getDate() + (today.getMonth() * 30); // 讓每個月的同一號也不同\n\nif (regionData) {\n    regionData.forEach(item => {\n        // --- 3. 取得現在與未來數據 ---\n        let nowMin = parseInt(item.minT[0].parameter.parameterName);\n        let nowMax = parseInt(item.maxT[0].parameter.parameterName);\n        let nextMin = parseInt(item.minT[1].parameter.parameterName);\n        let nextWx  = item.wx[1].parameter.parameterName;\n        let nextTime = item.minT[1].startTime.substring(5, 13); // \"MM-DD HH\"\n\n        // --- 4. 計算預警 (重點！) ---\n        let forecastMsg = `未來 12h 持平，天氣${nextWx}`;\n        let alertClass = \"normal\"; // 預設灰色\n\n        if (nextMin < nowMin - 3) {\n            forecastMsg = `📉 注意！氣溫驟降，將降至 ${nextMin}°C`;\n            alertClass = \"warning\";\n        } else if (nextMin <= 12) {\n            forecastMsg = `❄️ 寒流來襲警報！低溫 ${nextMin}°C`;\n            alertClass = \"danger\";\n        } else if (nextMin > nowMin + 3) {\n            forecastMsg = `📈 氣溫回升，將升至 ${nextMin}°C`;\n            alertClass = \"safe\";\n        }\n\n        // --- 5. 決定食補類別 ---\n        let category = \"normal\";\n        let status = \"舒適\";\n        let risk = \"safe\";\n        let icon = \"fa-sun-o\";\n\n        if (nowMin <= 16) {\n            category = \"cold\"; risk = \"danger\"; status = \"寒冷\"; icon = \"fa-snowflake-o\";\n        } else if (nowMin <= 20) {\n            category = \"cool\"; risk = \"warning\"; status = \"偏涼\"; icon = \"fa-cloud\";\n        } else if (nowMax >= 28) {\n            category = \"hot\"; status = \"炎熱\"; icon = \"fa-fire\";\n        }\n\n        // --- 6. 隨機演算法 (讓每個城市都不一樣) ---\n        // 使用 (城市字碼總和 + 日期) 當作亂數種子\n        let cityCode = item.city.split(\"\").reduce((a,b)=>a+b.charCodeAt(0), 0);\n        let uniqueSeed = cityCode + daySeed;\n        \n        // 從對應類別中挑選食物\n        let foodList = foodDB[category];\n        let foodPick = foodList[uniqueSeed % foodList.length];\n        \n        // 農民曆挑選\n        let yiPick = yiDB[uniqueSeed % yiDB.length];\n        let jiPick = jiDB[(uniqueSeed + 5) % jiDB.length];\n\n        outputArray.push({\n            city: item.city,\n            min: nowMin,\n            max: nowMax,\n            risk: risk,\n            status: status,\n            icon: icon,\n            food: foodPick,\n            // 搜尋連結\n            link: `https://www.google.com/search?q=${foodPick}+功效+食譜`,\n            almanac: `宜：${yiPick} ｜ 忌：${jiPick}`,\n            // 預警欄位\n            nextTime: nextTime,\n            forecastMsg: forecastMsg,\n            alertClass: alertClass\n        });\n    });\n}\n\nmsg.payload = outputArray;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 200,
+        "wires": [
+            [
+                "f842fa05b2e0c992"
+            ]
+        ]
+    },
+    {
+        "id": "f842fa05b2e0c992",
+        "type": "ui_template",
+        "z": "4bd671cd634b0665",
+        "group": "c867b83fc91849f1",
+        "name": "",
+        "order": 3,
+        "width": 0,
+        "height": 0,
+        "format": "<style>\n    /* 卡片主體 */\n    .weather-card {\n        background: #fff; border-radius: 15px;\n        box-shadow: 0 6px 12px rgba(0,0,0,0.15);\n        margin-bottom: 20px; border-left: 10px solid #ddd; overflow: hidden;\n    }\n    \n    /* 上半部：資訊區 */\n    .card-top { padding: 15px; position: relative; }\n    .city-title { font-size: 26px; font-weight: bold; color: #333; }\n    .temp-display { font-size: 20px; color: #555; margin-top: 5px; }\n    .lunar-style { \n        margin-top: 10px; padding-top: 8px; border-top: 1px dashed #bbb;\n        color: #c0392b; font-weight: bold; font-family: \"KaiTi\", \"BiauKai\", serif; font-size: 18px;\n    }\n    .badge-pill { \n        position: absolute; top: 15px; right: 15px; \n        padding: 6px 15px; border-radius: 20px; color: white; font-weight: bold; font-size: 15px;\n    }\n\n    /* 中間：食補區 */\n    .card-mid {\n        background: #f1f2f6; padding: 12px 15px;\n        display: flex; justify-content: space-between; align-items: center;\n        border-top: 1px solid #eee;\n    }\n    .food-name { font-size: 16px; font-weight: bold; color: #2c3e50; }\n    .link-btn {\n        background-color: #2980b9; color: white; text-decoration: none;\n        padding: 6px 12px; border-radius: 5px; font-size: 14px;\n        box-shadow: 0 2px 4px rgba(0,0,0,0.2);\n    }\n\n    /* --- 下方預警條 (重點顯眼設計) --- */\n    .forecast-bar {\n        padding: 12px 15px; \n        font-size: 16px; /* 字體加大 */\n        font-weight: 900; /* 極粗體 */\n        text-align: center; \n        letter-spacing: 1px;\n    }\n    /* 平常沒事：淺灰色 */\n    .alert-normal { background: #ecf0f1; color: #7f8c8d; }\n    /* 氣溫回升：綠色 */\n    .alert-safe { background: #2ecc71; color: #fff; }\n    /* 變天/寒流：紅色閃爍 (顯眼！) */\n    .alert-warning { background: #f39c12; color: #fff; }\n    .alert-danger { \n        background: #e74c3c; color: #fff; \n        border-top: 2px solid #c0392b;\n        animation: pulse 1.5s infinite; /* 呼吸燈效果 */\n    }\n    \n    @keyframes pulse {\n        0% { transform: scale(1); opacity: 1; }\n        50% { transform: scale(1.02); opacity: 0.9; } /* 微微放大 */\n        100% { transform: scale(1); opacity: 1; }\n    }\n    \n    /* 狀態邊框色 */\n    .card-danger { border-left-color: #e74c3c; } .badge-danger { background-color: #e74c3c; }\n    .card-warning { border-left-color: #f39c12; } .badge-warning { background-color: #f39c12; color: #333; }\n    .card-safe { border-left-color: #27ae60; } .badge-safe { background-color: #27ae60; }\n</style>\n\n<div ng-repeat=\"item in msg.payload\">\n    <div class=\"weather-card card-{{item.risk}}\">\n        <div class=\"card-top\">\n            <div class=\"city-title\">{{item.city}}</div>\n            <div class=\"temp-display\">\n                <i class=\"fa {{item.icon}}\"></i> {{item.min}}°C ~ {{item.max}}°C\n            </div>\n            <div class=\"lunar-style\">{{item.almanac}}</div>\n            <div class=\"badge-pill badge-{{item.risk}}\">{{item.status}}</div>\n        </div>\n\n        <div class=\"card-mid\">\n            <div class=\"food-name\">\n                <i class=\"fa fa-cutlery\" style=\"color:#d35400;\"></i> \n                今日特選：{{item.food}}\n            </div>\n            <a href=\"{{item.link}}\" target=\"_blank\" class=\"link-btn\">\n                <i class=\"fa fa-search\"></i> 查做法\n            </a>\n        </div>\n\n        <div class=\"forecast-bar alert-{{item.alertClass}}\">\n            <i class=\"fa fa-exclamation-circle\"></i> \n            {{item.nextTime}} 預報： {{item.forecastMsg}}\n        </div>\n    </div>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 620,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "99cf373e6612d593",
+        "type": "ui_template",
+        "z": "4bd671cd634b0665",
+        "group": "c867b83fc91849f1",
+        "name": "美化版面",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"\n    width: 100%; \n    height: 120px; \n    background-image: url('https://images.unsplash.com/photo-1534349762913-961129fdebe8?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80'); \n    background-size: cover; \n    background-position: center 30%; \n    border-radius: 15px; \n    margin-bottom: 15px; \n    box-shadow: 0 4px 6px rgba(0,0,0,0.3);\n    display: flex; \n    align-items: center; \n    justify-content: center;\n    position: relative;\">\n    \n    <div style=\"position:absolute; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.3); border-radius: 15px;\"></div>\n    \n    <h1 style=\"\n        color: white; \n        font-weight: bold; \n        font-size: 32px; \n        text-shadow: 2px 2px 4px #000; \n        z-index: 1; \n        margin: 0;\n        letter-spacing: 2px;\">\n        <i class=\"fa fa-heartbeat\"></i> 銀髮族健康氣象站\n    </h1>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 120,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "3f76fd4369670ccb",
+        "type": "function",
+        "z": "4bd671cd634b0665",
+        "name": "暫存台灣資料",
+        "func": "msg.taiwan = msg.payload; // 把台灣資料備份起來\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 120,
+        "wires": [
+            [
+                "b31da4a7a871c83d"
+            ]
+        ]
+    },
+    {
+        "id": "b31da4a7a871c83d",
+        "type": "http request",
+        "z": "4bd671cd634b0665",
+        "name": "抓日本氣象",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://api.open-meteo.com/v1/forecast?latitude=43.0667&longitude=141.3500&daily=temperature_2m_max,temperature_2m_min,weathercode&current_weather=true&timezone=Asia%2FTokyo",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 710,
+        "y": 120,
+        "wires": [
+            [
+                "3d3a6ff8bf27ee47"
+            ]
+        ]
+    },
+    {
+        "id": "54de0de1abca99e1",
+        "type": "inject",
+        "z": "4bd671cd634b0665",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 130,
+        "y": 380,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b92fced8671e28e9",
+        "type": "change",
+        "z": "4bd671cd634b0665",
+        "name": "",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "北部",
+                "tot": "str"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 140,
+        "y": 260,
+        "wires": [
+            [
+                "dd1aa9fb83d31b31"
+            ]
+        ]
+    },
+    {
+        "id": "c867b83fc91849f1",
+        "type": "ui_group",
+        "name": "主畫面",
+        "tab": "285e900a3bbea7ef",
+        "order": 1,
+        "disp": true,
+        "width": "14",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "285e900a3bbea7ef",
+        "type": "ui_tab",
+        "name": "氣象儀表板",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "255bed2f43e4f01b",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]
